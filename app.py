@@ -38,6 +38,36 @@ from tmm_core import (
 # =============================================================================
 
 st.set_page_config(page_title="TMM Simulator", layout="wide")
+
+# Responsive styling: shrink fonts/padding below 1024 px, flex-wrap columns
+# below 768 px. Streamlit has no built-in media-query hook, so we inject CSS.
+st.markdown(
+    """
+    <style>
+    @media (max-width: 1024px) {
+        html { font-size: 14px; }
+        .block-container,
+        [data-testid="stMainBlockContainer"],
+        [data-testid="stAppViewBlockContainer"] {
+            padding: 2rem 1rem 1rem 1rem !important;
+        }
+        .stButton button,
+        .stDownloadButton button {
+            padding: 0.25rem 0.6rem !important;
+            min-height: 1.9rem !important;
+        }
+        [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+        [data-testid="stMetricLabel"] { font-size: 0.75rem !important; }
+    }
+    @media (max-width: 768px) {
+        html { font-size: 13px; }
+        [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("TMM Simulator")
 st.markdown(
     "Transfer-matrix generation profiles and thickness sweeps for thin-film "
@@ -507,14 +537,14 @@ with tab_single:
                     fig.update_yaxes(title_text="Absorptance (%)", row=2, col=1,
                                      range=[0, 100])
                 rt_row, rt_col = 2, 2
-                fig_height = 900
+                fig_height = 700
             else:
                 fig = make_subplots(
                     rows=1, cols=1,
                     subplot_titles=('R, T, and per-layer absorption',),
                 )
                 rt_row, rt_col = 1, 1
-                fig_height = 500
+                fig_height = 400
 
             # Per-layer absorption + R + T
             trace_i = 0
@@ -801,7 +831,7 @@ with tab_sweep:
                         type="log" if log_y_sweep else "linear",
                     )
                 fig1.update_layout(
-                    height=500, plot_bgcolor='white', paper_bgcolor='white',
+                    height=400, plot_bgcolor='white', paper_bgcolor='white',
                     legend=dict(x=0.02, y=0.98,
                                 bgcolor='rgba(255,255,255,0.9)',
                                 bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
@@ -865,7 +895,7 @@ with tab_sweep:
                         xaxis_title="λ (nm)",
                         yaxis_title=yl,
                         yaxis=dict(type="log") if log_y_vs_lambda else dict(),
-                        height=500, plot_bgcolor='white',
+                        height=400, plot_bgcolor='white',
                         paper_bgcolor='white',
                         legend=dict(font=dict(size=9)),
                         margin=dict(l=70, r=40, t=50, b=60),
