@@ -69,6 +69,14 @@ st.markdown(
 )
 
 st.title("TMM Simulator")
+
+# Plotly config shared by every chart in the app. edits.legendPosition
+# makes the legend draggable (default: off); edits.annotationPosition lets
+# you reposition subplot titles too. displaylogo hides the Plotly brand.
+PLOTLY_CONFIG = {
+    "edits": {"legendPosition": True, "annotationPosition": True},
+    "displaylogo": False,
+}
 st.markdown(
     "Transfer-matrix generation profiles and thickness sweeps for thin-film "
     "solar stacks. Built on the [`tmm`](https://github.com/sbyrnes321/tmm) "
@@ -612,16 +620,33 @@ with tab_single:
                 fig.update_yaxes(title_text="R / T / A (%)",
                                  row=rt_row, col=rt_col)
 
+            # Legend: below the plots when 2x2 (keeps it out of the gutter);
+            # top-right inside the single plot otherwise. Still draggable
+            # (PLOTLY_CONFIG.edits.legendPosition).
+            if has_active:
+                legend_cfg = dict(
+                    orientation="h", yanchor="top", y=-0.12,
+                    xanchor="center", x=0.5,
+                    bgcolor='rgba(255,255,255,0.9)',
+                    bordercolor='rgba(0,0,0,0.3)', borderwidth=1,
+                    font=dict(size=10),
+                )
+                right_margin, bottom_margin = 90, 110
+            else:
+                legend_cfg = dict(
+                    yanchor="top", y=1.0, xanchor="right", x=0.99,
+                    bgcolor='rgba(255,255,255,0.9)',
+                    bordercolor='rgba(0,0,0,0.3)', borderwidth=1,
+                    font=dict(size=10),
+                )
+                right_margin, bottom_margin = 70, 70
             fig.update_layout(
                 height=fig_height, plot_bgcolor='white', paper_bgcolor='white',
-                legend=dict(y=0.48 if has_active else 1.0,
-                            x=0.99, xanchor='right',
-                            bgcolor='rgba(255,255,255,0.9)',
-                            bordercolor='rgba(0,0,0,0.3)', borderwidth=1,
-                            font=dict(size=9)),
-                margin=dict(l=70, r=120, t=60, b=70),
+                legend=legend_cfg,
+                margin=dict(l=70, r=right_margin, t=60, b=bottom_margin),
             )
-            st.plotly_chart(fig, use_container_width=True, theme=None)
+            st.plotly_chart(fig, use_container_width=True, theme=None,
+                                config=PLOTLY_CONFIG)
 
             # Downloads: G(z,λ) only when active; R/T/A always
             dl_col1, dl_col2 = st.columns(2)
@@ -884,7 +909,8 @@ with tab_sweep:
                                 bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
                     margin=dict(l=70, r=70, t=40, b=60),
                 )
-                st.plotly_chart(fig1, use_container_width=True, theme=None)
+                st.plotly_chart(fig1, use_container_width=True, theme=None,
+                                config=PLOTLY_CONFIG)
 
                 # Download CSV
                 csv_header = ["thickness_nm"] + list(series.keys())
@@ -947,7 +973,8 @@ with tab_sweep:
                         legend=dict(font=dict(size=9)),
                         margin=dict(l=70, r=40, t=50, b=60),
                     )
-                    st.plotly_chart(fig2, use_container_width=True, theme=None)
+                    st.plotly_chart(fig2, use_container_width=True, theme=None,
+                                config=PLOTLY_CONFIG)
 
 
 # =============================================================================
