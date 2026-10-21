@@ -623,39 +623,54 @@ with tab_single:
             )
             st.plotly_chart(fig, use_container_width=True, theme=None)
 
-            # Download G(z,λ) only when active
+            # Downloads: G(z,λ) only when active; R/T/A always
+            dl_col1, dl_col2 = st.columns(2)
             if has_active:
-                header = ("Charge generation [cm^-3*s^-1]\nColumn format:\n"
-                          "x (nm)\t" +
-                          "\t".join(f"{int(w)} nm" for w in wavelengths))
-                buf = io.StringIO()
-                np.savetxt(buf, np.column_stack([z_positions, generation]),
-                           fmt='%.6e', delimiter='\t',
-                           header=header, comments='# ')
+                with dl_col1:
+                    header = ("Charge generation [cm^-3*s^-1]\nColumn format:\n"
+                              "x (nm)\t" +
+                              "\t".join(f"{int(w)} nm" for w in wavelengths))
+                    buf = io.StringIO()
+                    np.savetxt(buf, np.column_stack([z_positions, generation]),
+                               fmt='%.6e', delimiter='\t',
+                               header=header, comments='# ')
+                    st.download_button(
+                        "Download G(z,λ)",
+                        data=buf.getvalue(),
+                        file_name="generation_profile_TMM.txt",
+                        mime="text/plain",
+                    )
+
+            # Build R/T/A CSV — skip front air; skip back air / opaque back
+            layer_cols = []
+            layer_data = []
+            for i in range(1, len(materials)):
+                if i == len(materials) - 1 and thicknesses[-1] == np.inf:
+                    continue
+                lname = layers[i - 1]['name'] if (i - 1 < len(layers)) else f"L{i}"
+                layer_cols.append(f"A_{lname}")
+                layer_data.append(A[:, i])
+            rt_header = ",".join(["wavelength_nm", "R", "T"] + layer_cols)
+            rt_rows = np.column_stack(
+                [wavelengths, R, T] + layer_data
+            )
+            rt_buf = io.StringIO()
+            rt_buf.write(rt_header + "\n")
+            np.savetxt(rt_buf, rt_rows, delimiter=",", fmt="%.6e")
+            with (dl_col2 if has_active else dl_col1):
                 st.download_button(
-                    "Download generation profile",
-                    data=buf.getvalue(),
-                    file_name="generation_profile_TMM.txt",
-                    mime="text/plain",
+                    "Download R, T, and per-layer A (CSV)",
+                    data=rt_buf.getvalue(),
+                    file_name="optical_RTA.csv",
+                    mime="text/csv",
                 )
 
-            # Metrics
-            band_R = band_integrate(R, solar_flux, wavelengths)
+            # Metric: only J_gen, only when an active layer is defined
             if has_active:
                 jgen = jgen_from_absorptance(absorptance_active, solar_flux,
                                              wavelengths)
-                peak_i = int(np.argmax(absorptance_active))
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Max G", f"{generation.max():.2e}")
-                m2.metric("J_gen", f"{jgen:.2f} mA/cm²")
-                m3.metric("Peak A", f"{absorptance_active[peak_i]*100:.1f}%",
-                          help=f"at {wavelengths[peak_i]:.0f} nm")
-                m4.metric("Band-avg R", f"{band_R*100:.1f}%")
-            else:
-                band_T = band_integrate(T, solar_flux, wavelengths)
-                m1, m2 = st.columns(2)
-                m1.metric("Band-avg R", f"{band_R*100:.1f}%")
-                m2.metric("Band-avg T", f"{band_T*100:.1f}%")
+                st.metric("J_gen", f"{jgen:.2f} mA/cm²",
+                          help="Maximum current assuming SCE=1.")
 
 
 # -----------------------------------------------------------------------------
