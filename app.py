@@ -28,6 +28,7 @@ from tmm_core import (
     jgen_from_absorptance,
     list_nk_files,
     load_nk_file,
+    load_overlay_data,
     load_solar_spectrum,
 )
 
@@ -227,16 +228,27 @@ for display_idx, layer_id in enumerate(st.session_state.layer_order):
 
     layers[display_idx] = cfg
 
-# Active-layer selection
+# Active-layer selection (optional)
 st.markdown("#### Active layer")
-layer_names = [f"Layer {i+1}: {layers[i]['name']}" for i in range(len(layers))]
-active_display_idx = st.selectbox(
-    "Which layer is the absorber?",
-    options=list(range(len(layers))),
-    format_func=lambda x: layer_names[x],
-    key="active_layer_selector",
+has_active = st.checkbox(
+    "Stack has an active (absorber) layer",
+    value=st.session_state.get("has_active_layer", True),
+    key="has_active_layer",
+    help="Uncheck for simple optical stacks like glass/ITO where you only "
+         "care about R, T, and per-layer absorptance.",
 )
-active_layer_config = layers[active_display_idx]
+if has_active:
+    layer_names = [f"Layer {i+1}: {layers[i]['name']}" for i in range(len(layers))]
+    active_display_idx = st.selectbox(
+        "Which layer is the absorber?",
+        options=list(range(len(layers))),
+        format_func=lambda x: layer_names[x],
+        key="active_layer_selector",
+    )
+    active_layer_config = layers[active_display_idx]
+else:
+    active_display_idx = None
+    active_layer_config = None
 
 # Wavelength / angle / resolution
 st.markdown("#### Wavelength, angle, resolution")
@@ -290,7 +302,7 @@ def build_stack():
         thicknesses.append(np.inf)
         coh.append('i')
     coh[-1] = 'i'  # TMM requires incoherent outer layers
-    active_idx = active_display_idx + 1  # +1 for front air
+    active_idx = (active_display_idx + 1) if active_display_idx is not None else None
     return materials, thicknesses, coh, active_idx, is_semitrans
 
 
@@ -320,10 +332,64 @@ def resolve_spectrum(wavelengths: np.ndarray):
 
 
 # =============================================================================
+# Experimental overlays (shared)
+# =============================================================================
+
+with st.expander("Experimental overlays (optional)", expanded=False):
+    st.caption(
+        "Upload 2-column files (wavelength [nm], value). Values can be either "
+        "fraction (0–1) or percent (0–100); the percent scale is auto-detected. "
+        "Each plot has an 'Overlay experimental data' toggle to draw all "
+        "uploaded curves."
+    )
+    overlay_files = st.file_uploader(
+        "Overlay files",
+        type=['txt', 'csv', 'dat', 'sp'],
+        accept_multiple_files=True,
+        key="overlay_files",
+    )
+    overlays = []
+    if overlay_files:
+        for f in overlay_files:
+            try:
+                wl, y = load_overlay_data(f)
+                overlays.append({'name': f.name, 'wl': wl, 'y': y})
+            except Exception as e:
+                st.warning(f"Could not parse {f.name}: {e}")
+        if overlays:
+            st.caption(
+                "Parsed: " + ", ".join(
+                    f"**{o['name']}** ({len(o['wl'])} pts, "
+                    f"{o['wl'].min():.0f}–{o['wl'].max():.0f} nm)"
+                    for o in overlays
+                )
+            )
+
+
+def _add_overlays_to_plot(fig, overlays, row=None, col=None):
+    """Add every uploaded overlay as a dashed trace in black-tone shades."""
+    if not overlays:
+        return
+    shades = ['black', 'rgb(60,60,60)', 'rgb(120,120,120)', 'rgb(180,180,180)']
+    for i, o in enumerate(overlays):
+        trace = go.Scatter(
+            x=o['wl'], y=o['y'] * 100, mode='lines+markers',
+            line=dict(color=shades[i % len(shades)], width=1.5, dash='dash'),
+            marker=dict(size=4, color=shades[i % len(shades)]),
+            name=f"exp: {o['name']}",
+            legendgroup=f"exp_{i}",
+        )
+        if row is not None and col is not None:
+            fig.add_trace(trace, row=row, col=col)
+        else:
+            fig.add_trace(trace)
+
+
+# =============================================================================
 # Tabs
 # =============================================================================
 
-tab_single, tab_sweep = st.tabs(["Single-point G(z,λ)", "Thickness sweep"])
+tab_single, tab_sweep = st.tabs(["Single-point optics", "Thickness sweep"])
 
 
 # -----------------------------------------------------------------------------
@@ -331,13 +397,31 @@ tab_single, tab_sweep = st.tabs(["Single-point G(z,λ)", "Thickness sweep"])
 # -----------------------------------------------------------------------------
 
 with tab_single:
-    st.markdown(
-        "Compute R, T, per-layer absorptance, and the full spatially-resolved "
-        "generation rate G(z,λ) in the active layer."
-    )
+    if has_active:
+        st.markdown(
+            "Compute R, T, per-layer absorptance, and the spatially-resolved "
+            "generation rate G(z,λ) in the active layer."
+        )
+    else:
+        st.markdown(
+            "Compute R, T, and per-layer absorptance (no active layer selected, "
+            "so no G(z,λ))."
+        )
 
-    if st.button("Calculate generation profile", type="primary",
-                 key="btn_single"):
+    plot_opts = st.columns(3)
+    with plot_opts[0]:
+        log_y_single = st.checkbox("Log-y on absorptance plots",
+                                    key="log_y_single")
+    with plot_opts[1]:
+        show_overlays_single = st.checkbox(
+            "Overlay experimental data",
+            key="overlays_on_single",
+            disabled=not overlays,
+            help="Overlays all uploaded files on the R/T/A-vs-λ plot. Upload "
+                 "files in the expander above.",
+        )
+
+    if st.button("Run calculation", type="primary", key="btn_single"):
         materials, thicknesses, coh, active_idx, is_semitrans = build_stack()
         if materials is None:
             st.error("Please provide n-k files for all layers.")
@@ -346,108 +430,131 @@ with tab_single:
             solar_flux, spec_msg = resolve_spectrum(wavelengths)
             st.info(spec_msg)
             if is_semitrans:
-                st.info("Semi-transparent device: added air behind the last "
-                        "layer.")
-            if coh[active_idx] == 'i':
+                st.info("Semi-transparent device: air appended behind the "
+                        "last layer.")
+            if has_active and coh[active_idx] == 'i':
                 st.warning("Active layer is incoherent — G(z,λ) will be zero.")
 
             with st.spinner("Running TMM…"):
-                z_positions, generation = calculate_generation_tmm(
-                    materials, thicknesses, coh, active_idx,
-                    wavelengths, solar_flux, n_depths=n_depths,
-                    angle_rad=angle_rad,
-                )
                 R, T, A = compute_rt_absorption(
                     materials, thicknesses, coh, wavelengths,
                     angle_rad=angle_rad,
                 )
+                if has_active:
+                    z_positions, generation = calculate_generation_tmm(
+                        materials, thicknesses, coh, active_idx,
+                        wavelengths, solar_flux, n_depths=n_depths,
+                        angle_rad=angle_rad,
+                    )
+                else:
+                    z_positions, generation = None, None
 
-            absorptance_active = A[:, active_idx]
-            total_generation = np.trapezoid(generation, wavelengths, axis=1)
-
-            # 2x2 figure
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    f'Total generation in {active_layer_config["name"]}',
-                    'G(z,λ) heatmap',
-                    f'Absorptance in {active_layer_config["name"]}',
-                    'Absorption across layers',
-                ),
-                specs=[[{"type": "scatter"}, {"type": "heatmap"}],
-                       [{"type": "scatter"}, {"type": "scatter"}]],
-                vertical_spacing=0.12, horizontal_spacing=0.10,
-            )
-            fig.add_trace(go.Scatter(
-                x=z_positions, y=total_generation / 1e21, mode='lines',
-                line=dict(color='rgb(220, 20, 60)', width=3),
-                fill='tozeroy', fillcolor='rgba(220, 20, 60, 0.3)',
-                showlegend=False,
-            ), row=1, col=1)
-            fig.update_xaxes(title_text="Depth in active layer (nm)",
-                             row=1, col=1)
-            fig.update_yaxes(title_text="G (×10²¹ cm⁻³ s⁻¹)",
-                             row=1, col=1)
-
-            fig.add_trace(go.Heatmap(
-                x=wavelengths, y=z_positions, z=generation / 1e21,
-                colorscale='Viridis',
-                colorbar=dict(title="G(z,λ)<br>×10²¹", x=1.02, len=0.45, y=0.78),
-                showscale=True,
-            ), row=1, col=2)
-            fig.update_xaxes(title_text="λ (nm)", row=1, col=2)
-            fig.update_yaxes(title_text="Depth (nm)", row=1, col=2)
-
-            fig.add_trace(go.Scatter(
-                x=wavelengths, y=absorptance_active * 100, mode='lines',
-                line=dict(color='rgb(50, 120, 180)', width=3),
-                fill='tozeroy', fillcolor='rgba(50, 120, 180, 0.3)',
-                showlegend=False,
-            ), row=2, col=1)
-            fig.update_xaxes(title_text="λ (nm)", row=2, col=1)
-            fig.update_yaxes(title_text="Absorptance (%)", row=2, col=1,
-                             range=[0, 100])
-
-            # Per-layer absorption (skip front air; skip opaque back)
             palette = [
                 'rgb(228,26,28)', 'rgb(55,126,184)', 'rgb(77,175,74)',
                 'rgb(152,78,163)', 'rgb(255,127,0)', 'rgb(166,86,40)',
                 'rgb(247,129,191)', 'rgb(153,153,153)', 'rgb(255,255,51)',
                 'rgb(0,255,255)', 'rgb(128,0,128)', 'rgb(0,128,128)',
             ]
+
+            if has_active:
+                absorptance_active = A[:, active_idx]
+                total_generation = np.trapezoid(generation, wavelengths, axis=1)
+
+                fig = make_subplots(
+                    rows=2, cols=2,
+                    subplot_titles=(
+                        f'Total G(z) in {active_layer_config["name"]}',
+                        'G(z,λ) heatmap',
+                        f'Absorptance in {active_layer_config["name"]}',
+                        'R, T, and per-layer absorption',
+                    ),
+                    specs=[[{"type": "scatter"}, {"type": "heatmap"}],
+                           [{"type": "scatter"}, {"type": "scatter"}]],
+                    vertical_spacing=0.12, horizontal_spacing=0.10,
+                )
+                fig.add_trace(go.Scatter(
+                    x=z_positions, y=total_generation / 1e21, mode='lines',
+                    line=dict(color='rgb(220, 20, 60)', width=3),
+                    fill='tozeroy', fillcolor='rgba(220, 20, 60, 0.3)',
+                    showlegend=False,
+                ), row=1, col=1)
+                fig.update_xaxes(title_text="Depth in active layer (nm)",
+                                 row=1, col=1)
+                fig.update_yaxes(title_text="G (×10²¹ cm⁻³ s⁻¹)",
+                                 row=1, col=1)
+
+                fig.add_trace(go.Heatmap(
+                    x=wavelengths, y=z_positions, z=generation / 1e21,
+                    colorscale='Viridis',
+                    colorbar=dict(title="G(z,λ)<br>×10²¹",
+                                  x=1.02, len=0.45, y=0.78),
+                    showscale=True,
+                ), row=1, col=2)
+                fig.update_xaxes(title_text="λ (nm)", row=1, col=2)
+                fig.update_yaxes(title_text="Depth (nm)", row=1, col=2)
+
+                fig.add_trace(go.Scatter(
+                    x=wavelengths, y=absorptance_active * 100, mode='lines',
+                    line=dict(color='rgb(50, 120, 180)', width=3),
+                    fill='tozeroy', fillcolor='rgba(50, 120, 180, 0.3)',
+                    showlegend=False,
+                ), row=2, col=1)
+                fig.update_xaxes(title_text="λ (nm)", row=2, col=1)
+                if log_y_single:
+                    fig.update_yaxes(title_text="Absorptance (%)", row=2, col=1,
+                                     type='log')
+                else:
+                    fig.update_yaxes(title_text="Absorptance (%)", row=2, col=1,
+                                     range=[0, 100])
+                rt_row, rt_col = 2, 2
+                fig_height = 900
+            else:
+                fig = make_subplots(
+                    rows=1, cols=1,
+                    subplot_titles=('R, T, and per-layer absorption',),
+                )
+                rt_row, rt_col = 1, 1
+                fig_height = 500
+
+            # Per-layer absorption + R + T
             trace_i = 0
             for i in range(len(materials)):
                 if i == 0:
                     continue
                 if i == len(materials) - 1 and thicknesses[-1] == np.inf:
-                    if is_semitrans:
-                        continue  # back air
-                    else:
-                        continue  # opaque back
+                    continue  # skip back air / opaque back
                 name = layers[i - 1]['name'] if (i - 1 < len(layers)) else f"L{i}"
                 fig.add_trace(go.Scatter(
                     x=wavelengths, y=A[:, i] * 100, mode='lines',
                     line=dict(color=palette[trace_i % len(palette)], width=2),
                     name=name,
-                ), row=2, col=2)
+                ), row=rt_row, col=rt_col)
                 trace_i += 1
             fig.add_trace(go.Scatter(
                 x=wavelengths, y=R * 100, mode='lines',
                 line=dict(color='black', width=2.5, dash='dash'),
                 name='Reflection',
-            ), row=2, col=2)
+            ), row=rt_row, col=rt_col)
             if is_semitrans:
                 fig.add_trace(go.Scatter(
                     x=wavelengths, y=T * 100, mode='lines',
                     line=dict(color='gray', width=2.5, dash='dot'),
                     name='Transmission',
-                ), row=2, col=2)
-            fig.update_xaxes(title_text="λ (nm)", row=2, col=2)
-            fig.update_yaxes(title_text="Absorptance (%)", row=2, col=2)
+                ), row=rt_row, col=rt_col)
+            if show_overlays_single and overlays:
+                _add_overlays_to_plot(fig, overlays, row=rt_row, col=rt_col)
+            fig.update_xaxes(title_text="λ (nm)", row=rt_row, col=rt_col)
+            if log_y_single:
+                fig.update_yaxes(title_text="R / T / A (%)",
+                                 row=rt_row, col=rt_col, type='log')
+            else:
+                fig.update_yaxes(title_text="R / T / A (%)",
+                                 row=rt_row, col=rt_col)
 
             fig.update_layout(
-                height=900, plot_bgcolor='white', paper_bgcolor='white',
-                legend=dict(y=0.48, x=0.99, xanchor='right',
+                height=fig_height, plot_bgcolor='white', paper_bgcolor='white',
+                legend=dict(y=0.48 if has_active else 1.0,
+                            x=0.99, xanchor='right',
                             bgcolor='rgba(255,255,255,0.9)',
                             bordercolor='rgba(0,0,0,0.3)', borderwidth=1,
                             font=dict(size=9)),
@@ -455,30 +562,39 @@ with tab_single:
             )
             st.plotly_chart(fig, use_container_width=True, theme=None)
 
-            # Download
-            header = ("Charge generation [cm^-3*s^-1]\nColumn format:\n"
-                      "x (nm)\t" +
-                      "\t".join(f"{int(w)} nm" for w in wavelengths))
-            buf = io.StringIO()
-            np.savetxt(buf, np.column_stack([z_positions, generation]),
-                       fmt='%.6e', delimiter='\t', header=header, comments='# ')
-            st.download_button(
-                "Download generation profile",
-                data=buf.getvalue(),
-                file_name="generation_profile_TMM.txt",
-                mime="text/plain",
-            )
+            # Download G(z,λ) only when active
+            if has_active:
+                header = ("Charge generation [cm^-3*s^-1]\nColumn format:\n"
+                          "x (nm)\t" +
+                          "\t".join(f"{int(w)} nm" for w in wavelengths))
+                buf = io.StringIO()
+                np.savetxt(buf, np.column_stack([z_positions, generation]),
+                           fmt='%.6e', delimiter='\t',
+                           header=header, comments='# ')
+                st.download_button(
+                    "Download generation profile",
+                    data=buf.getvalue(),
+                    file_name="generation_profile_TMM.txt",
+                    mime="text/plain",
+                )
 
             # Metrics
-            jgen = jgen_from_absorptance(absorptance_active, solar_flux,
-                                         wavelengths)
-            peak_i = int(np.argmax(absorptance_active))
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Max G", f"{generation.max():.2e}")
-            m2.metric("J_gen", f"{jgen:.2f} mA/cm²")
-            m3.metric("Peak abs.", f"{absorptance_active[peak_i]*100:.1f}%",
-                      help=f"at {wavelengths[peak_i]:.0f} nm")
-            m4.metric("Band-avg R", f"{band_integrate(R, solar_flux, wavelengths)*100:.1f}%")
+            band_R = band_integrate(R, solar_flux, wavelengths)
+            if has_active:
+                jgen = jgen_from_absorptance(absorptance_active, solar_flux,
+                                             wavelengths)
+                peak_i = int(np.argmax(absorptance_active))
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Max G", f"{generation.max():.2e}")
+                m2.metric("J_gen", f"{jgen:.2f} mA/cm²")
+                m3.metric("Peak A", f"{absorptance_active[peak_i]*100:.1f}%",
+                          help=f"at {wavelengths[peak_i]:.0f} nm")
+                m4.metric("Band-avg R", f"{band_R*100:.1f}%")
+            else:
+                band_T = band_integrate(T, solar_flux, wavelengths)
+                m1, m2 = st.columns(2)
+                m1.metric("Band-avg R", f"{band_R*100:.1f}%")
+                m2.metric("Band-avg T", f"{band_T*100:.1f}%")
 
 
 # -----------------------------------------------------------------------------
@@ -532,13 +648,18 @@ with tab_sweep:
             (["Transmission (band-avg)"] if layers[-1]['thickness'] != np.inf
              else []) +
             [f"Absorptance in {lyr['name']} (band-avg)" for lyr in layers] +
-            ["J_gen in active layer (mA/cm²)"]
+            (["J_gen in active layer (mA/cm²)"] if has_active else [])
         )
-        default_outputs = [
-            "Reflection (band-avg)",
-            f"Absorptance in {active_layer_config['name']} (band-avg)",
-            "J_gen in active layer (mA/cm²)",
-        ]
+        if has_active:
+            default_outputs = [
+                "Reflection (band-avg)",
+                f"Absorptance in {active_layer_config['name']} (band-avg)",
+                "J_gen in active layer (mA/cm²)",
+            ]
+        else:
+            default_outputs = ["Reflection (band-avg)"]
+            if layers[-1]['thickness'] != np.inf:
+                default_outputs.append("Transmission (band-avg)")
         default_outputs = [o for o in default_outputs if o in output_choices]
         selected_outputs = st.multiselect(
             "Quantities to plot vs. thickness",
@@ -551,6 +672,21 @@ with tab_sweep:
              *[f"Absorptance A(λ) in {lyr['name']}" for lyr in layers]],
             index=0,
         )
+
+        opt1, opt2, opt3 = st.columns(3)
+        with opt1:
+            log_y_sweep = st.checkbox("Log-y on main (vs-thickness) plot",
+                                       key="log_y_sweep")
+        with opt2:
+            log_y_vs_lambda = st.checkbox("Log-y on vs-λ plot",
+                                          key="log_y_vs_lambda")
+        with opt3:
+            show_overlays_sweep = st.checkbox(
+                "Overlay experimental data (vs-λ plot)",
+                key="overlays_on_sweep",
+                disabled=(not overlays) or vs_lambda_choice == "None",
+                help="Draws uploaded files on the vs-λ overlay plot.",
+            )
 
         if st.button("Run thickness sweep", type="primary", key="btn_sweep"):
             if any(lyr['file'] is None for lyr in layers):
@@ -653,11 +789,17 @@ with tab_sweep:
                     type="log" if log_spacing else "linear",
                 )
                 if has_pct:
-                    fig1.update_yaxes(title_text="R / T / Absorptance (%)",
-                                       secondary_y=False)
+                    fig1.update_yaxes(
+                        title_text="R / T / Absorptance (%)",
+                        secondary_y=False,
+                        type="log" if log_y_sweep else "linear",
+                    )
                 if has_jgen:
-                    fig1.update_yaxes(title_text="J_gen (mA/cm²)",
-                                       secondary_y=has_pct)
+                    fig1.update_yaxes(
+                        title_text="J_gen (mA/cm²)",
+                        secondary_y=has_pct,
+                        type="log" if log_y_sweep else "linear",
+                    )
                 fig1.update_layout(
                     height=500, plot_bgcolor='white', paper_bgcolor='white',
                     legend=dict(x=0.02, y=0.98,
@@ -716,10 +858,13 @@ with tab_sweep:
                                       width=1.5),
                             name=f"{tv:.1f} nm",
                         ))
+                    if show_overlays_sweep and overlays:
+                        _add_overlays_to_plot(fig2, overlays)
                     fig2.update_layout(
                         title=vs_lambda_choice,
                         xaxis_title="λ (nm)",
                         yaxis_title=yl,
+                        yaxis=dict(type="log") if log_y_vs_lambda else dict(),
                         height=500, plot_bgcolor='white',
                         paper_bgcolor='white',
                         legend=dict(font=dict(size=9)),

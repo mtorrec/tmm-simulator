@@ -225,3 +225,36 @@ def jgen_from_absorptance(absorptance_active: np.ndarray,
     q = 1.602176634e-19
     integral = np.trapezoid(absorptance_active * flux, wavelengths)  # /cm²/s
     return float(q * integral * 1e3)  # mA/cm²
+
+
+def load_overlay_data(file) -> Tuple[np.ndarray, np.ndarray]:
+    """Load a 2-column (wavelength_nm, value) file for overlaying on plots.
+
+    Auto-detects whitespace vs. comma delimiter and percent vs. fraction
+    scale (if max(value) > 2, divides by 100).
+
+    Returns (wavelengths_nm, values_fraction).
+    """
+    def _try_load(delim):
+        if hasattr(file, 'seek'):
+            file.seek(0)
+        return np.loadtxt(file, comments='#', delimiter=delim)
+
+    data = None
+    for delim in (None, ','):
+        try:
+            d = _try_load(delim)
+            if d.ndim == 2 and d.shape[1] >= 2:
+                data = d
+                break
+        except Exception:
+            continue
+    if data is None:
+        raise ValueError(
+            "Could not parse overlay file; need 2 columns (wavelength, value)."
+        )
+    wl = data[:, 0].astype(float)
+    y = data[:, 1].astype(float)
+    if np.nanmax(y) > 2:
+        y = y / 100.0
+    return wl, y
