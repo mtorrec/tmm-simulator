@@ -168,7 +168,7 @@ for display_idx, layer_id in enumerate(st.session_state.layer_order):
             st.write("")
 
     with col_body:
-        c1, c2, c3, c4 = st.columns([2, 1, 2, 1])
+        c1, c2, c3, c4 = st.columns([1.3, 1.3, 2.5, 0.9])
         with c1:
             cfg['name'] = st.text_input(
                 f"Layer {display_idx + 1} name",
@@ -500,7 +500,7 @@ with tab_single:
                     ),
                     specs=[[{"type": "scatter"}, {"type": "heatmap"}],
                            [{"type": "scatter"}, {"type": "scatter"}]],
-                    vertical_spacing=0.12, horizontal_spacing=0.10,
+                    vertical_spacing=0.22, horizontal_spacing=0.10,
                 )
                 fig.add_trace(go.Scatter(
                     x=z_positions, y=total_generation / 1e21, mode='lines',
@@ -557,7 +557,7 @@ with tab_single:
                 fig.add_trace(go.Scatter(
                     x=wavelengths, y=A[:, i] * 100, mode='lines',
                     line=dict(color=palette[trace_i % len(palette)], width=2),
-                    name=name,
+                    name=f"{name} (A)",
                 ), row=rt_row, col=rt_col)
                 trace_i += 1
             fig.add_trace(go.Scatter(
