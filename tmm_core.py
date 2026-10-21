@@ -228,33 +228,90 @@ def jgen_from_absorptance(absorptance_active: np.ndarray,
 
 
 def load_overlay_data(file) -> Tuple[np.ndarray, np.ndarray]:
-    """Load a 2-column (wavelength_nm, value) file for overlaying on plots.
+    """Load the first 2 columns (wavelength_nm, value) from a text file for
+    overlaying on plots.
 
-    Auto-detects whitespace vs. comma delimiter and percent vs. fraction
-    scale (if max(value) > 2, divides by 100).
+    Robust to:
+      - UTF-8 BOM;
+      - '#'-prefixed comment blocks;
+      - a column-header line that is NOT comment-prefixed (e.g. instrument
+        exports: ``Wavelength [nm]\\tTransmittance\\tAbsorbance\\t...``) —
+        scans for the first line whose first token parses as a float;
+      - whitespace or comma delimiters;
+      - extra columns beyond the first two (ignored);
+      - NaN / inf rows (dropped);
+      - percent vs. fraction scale (if max value > 2, divides by 100).
 
     Returns (wavelengths_nm, values_fraction).
     """
-    def _try_load(delim):
-        if hasattr(file, 'seek'):
-            file.seek(0)
-        return np.loadtxt(file, comments='#', delimiter=delim)
+    import io as _io
 
+    # 1. Read bytes/text and decode
+    if hasattr(file, 'seek'):
+        file.seek(0)
+    if hasattr(file, 'read'):
+        raw = file.read()
+    else:
+        with open(file, 'rb') as f:
+            raw = f.read()
+    if isinstance(raw, bytes):
+        text = None
+        for enc in ('utf-8', 'latin-1', 'cp1252'):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise ValueError("Could not decode overlay file.")
+    else:
+        text = raw
+    if text.startswith('﻿'):
+        text = text[1:]
+
+    # 2. Find first line whose first token is numeric (skip comments + headers)
+    lines = text.splitlines()
+    data_start = None
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not s or s.startswith('#'):
+            continue
+        first_tok = s.replace(',', ' ').split()[0]
+        try:
+            float(first_tok)
+            data_start = i
+            break
+        except ValueError:
+            continue
+    if data_start is None:
+        raise ValueError("No numeric data found in overlay file.")
+
+    data_text = '\n'.join(lines[data_start:])
+
+    # 3. Parse: try whitespace then comma
     data = None
     for delim in (None, ','):
         try:
-            d = _try_load(delim)
+            d = np.loadtxt(_io.StringIO(data_text), comments='#',
+                           delimiter=delim)
             if d.ndim == 2 and d.shape[1] >= 2:
                 data = d
+                break
+            if d.ndim == 1 and d.size >= 2:
+                data = d.reshape(1, -1)
                 break
         except Exception:
             continue
     if data is None:
         raise ValueError(
-            "Could not parse overlay file; need 2 columns (wavelength, value)."
+            "Could not parse overlay file; need 2 numeric columns "
+            "(wavelength, value)."
         )
+
     wl = data[:, 0].astype(float)
     y = data[:, 1].astype(float)
-    if np.nanmax(y) > 2:
+    mask = np.isfinite(wl) & np.isfinite(y)
+    wl, y = wl[mask], y[mask]
+    if y.size and np.nanmax(y) > 2:
         y = y / 100.0
     return wl, y
