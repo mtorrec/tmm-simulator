@@ -336,6 +336,36 @@ def build_stack():
     return materials, thicknesses, coh, active_idx, is_semitrans
 
 
+def warn_nk_coverage(materials, wavelengths):
+    """Warn via st.warning if any loaded n,k file does not cover the requested
+    wavelength range (i.e. will be linearly extrapolated)."""
+    req_lo = float(wavelengths.min())
+    req_hi = float(wavelengths.max())
+    issues = []
+    # Materials: [air, layer_0, layer_1, ..., layer_{N-1}, (optional back air)].
+    # Hardcoded air lambdas lack wl_min_data; use that to skip them.
+    for i in range(1, min(len(materials), len(layers) + 1)):
+        mat = materials[i]
+        wl_lo = getattr(mat, "wl_min_data", None)
+        wl_hi = getattr(mat, "wl_max_data", None)
+        if wl_lo is None or wl_hi is None:
+            continue
+        name = layers[i - 1]["name"]
+        if wl_lo > req_lo or wl_hi < req_hi:
+            issues.append((name, wl_lo, wl_hi))
+    if issues:
+        lines = [
+            f"- **{n}**: data covers {lo:.0f}–{hi:.0f} nm "
+            f"(requested {req_lo:.0f}–{req_hi:.0f} nm)"
+            for n, lo, hi in issues
+        ]
+        st.warning(
+            "Some layers have n,k data narrower than the requested wavelength "
+            "range — values outside the measured range are linearly "
+            "**extrapolated** and may be unphysical:\n" + "\n".join(lines)
+        )
+
+
 def resolve_spectrum(wavelengths: np.ndarray):
     """Return (flux_array, info_msg)."""
     if spectrum_option == "White light":
@@ -459,6 +489,7 @@ with tab_single:
             wavelengths = np.linspace(wl_min, wl_max, n_wavelengths)
             solar_flux, spec_msg = resolve_spectrum(wavelengths)
             st.info(spec_msg)
+            warn_nk_coverage(materials, wavelengths)
             if is_semitrans:
                 st.info("Semi-transparent device: air appended behind the "
                         "last layer.")
@@ -735,6 +766,7 @@ with tab_sweep:
                 wavelengths = np.linspace(wl_min, wl_max, n_wavelengths)
                 solar_flux, spec_msg = resolve_spectrum(wavelengths)
                 st.info(spec_msg)
+                warn_nk_coverage(materials, wavelengths)
 
                 # Index of swept layer inside the padded thickness list
                 swept_idx = sweep_layer_display + 1

@@ -70,7 +70,13 @@ def load_nk_file(file) -> MaterialFn:
                         bounds_error=False, fill_value='extrapolate')
     k_interp = interp1d(wavelengths, k_data, kind='linear',
                         bounds_error=False, fill_value='extrapolate')
-    return lambda wl: n_interp(wl) + 1j * k_interp(wl)
+
+    def _mat(wl):
+        return n_interp(wl) + 1j * k_interp(wl)
+
+    _mat.wl_min_data = float(wavelengths.min())
+    _mat.wl_max_data = float(wavelengths.max())
+    return _mat
 
 
 def load_solar_spectrum(file) -> Tuple[np.ndarray, np.ndarray]:
