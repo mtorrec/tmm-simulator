@@ -1,13 +1,10 @@
 # TMM Simulator
 
 Transfer-matrix optical simulations for thin-film solar stacks, with
-single-point G(z,λ) analysis and layer-thickness sweeps. Streamlit UI, no
-Setfos / SIMsalabim dependency for the optics.
+single-point G(z,λ) analysis and layer-thickness sweeps. Streamlit UI.
 
 - **Single-point tab**: compute spatially-resolved generation rate G(z,λ) in
-  the active layer, per-layer absorptance, reflection and transmission. Export
-  G(z,λ) as a text file compatible with
-  [SIMsalabim](https://github.com/kostergroup/SIMsalabim).
+  the active layer, per-layer absorptance, reflection and transmission.
 - **Thickness sweep tab**: pick any layer, scan a range of thicknesses, and
   plot band-integrated R, T, per-layer absorptance, and J_gen in the active
   layer vs. the swept thickness. Linear or log spacing. Optional "vs. λ" view
@@ -60,8 +57,6 @@ tmm-app/
 - Perovskite n-k data: the
   [Perovskite Dielectric Constants Repository](https://github.com/akashdasgupta/Perovskite-Dielectric-Constants-Repository)
   by Akash Dasgupta et al.
-- Compatible with [SIMsalabim](https://github.com/kostergroup/SIMsalabim) for
-  downstream drift–diffusion simulations.
 
 ## License
 
